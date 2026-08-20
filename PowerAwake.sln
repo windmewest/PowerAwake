@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{9EAB860F-72C7-42F6-BE73-1593FA29C04A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerAwake.Core", "src\PowerAwake.Core\PowerAwake.Core.csproj", "{766B1E44-5BE4-4980-BBAB-721F80794099}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerAwake.Windows", "src\PowerAwake.Windows\PowerAwake.Windows.csproj", "{29DDBB31-C284-448C-AE48-64B7B8F29320}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerAwake.App", "src\PowerAwake.App\PowerAwake.App.csproj", "{F4E23BB6-DE7D-4EED-92D7-3ECF376E9105}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A1D44CEB-8695-41D3-9918-DD3930ECEB7F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PowerAwake.Core.Tests", "tests\PowerAwake.Core.Tests\PowerAwake.Core.Tests.csproj", "{01FEB238-F113-4A35-A8D8-DE434F0E4DF2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{766B1E44-5BE4-4980-BBAB-721F80794099}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{766B1E44-5BE4-4980-BBAB-721F80794099}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{766B1E44-5BE4-4980-BBAB-721F80794099}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{766B1E44-5BE4-4980-BBAB-721F80794099}.Release|Any CPU.Build.0 = Release|Any CPU
+		{29DDBB31-C284-448C-AE48-64B7B8F29320}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{29DDBB31-C284-448C-AE48-64B7B8F29320}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{29DDBB31-C284-448C-AE48-64B7B8F29320}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{29DDBB31-C284-448C-AE48-64B7B8F29320}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F4E23BB6-DE7D-4EED-92D7-3ECF376E9105}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F4E23BB6-DE7D-4EED-92D7-3ECF376E9105}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F4E23BB6-DE7D-4EED-92D7-3ECF376E9105}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F4E23BB6-DE7D-4EED-92D7-3ECF376E9105}.Release|Any CPU.Build.0 = Release|Any CPU
+		{01FEB238-F113-4A35-A8D8-DE434F0E4DF2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{01FEB238-F113-4A35-A8D8-DE434F0E4DF2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{01FEB238-F113-4A35-A8D8-DE434F0E4DF2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{01FEB238-F113-4A35-A8D8-DE434F0E4DF2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{766B1E44-5BE4-4980-BBAB-721F80794099} = {9EAB860F-72C7-42F6-BE73-1593FA29C04A}
+		{29DDBB31-C284-448C-AE48-64B7B8F29320} = {9EAB860F-72C7-42F6-BE73-1593FA29C04A}
+		{F4E23BB6-DE7D-4EED-92D7-3ECF376E9105} = {9EAB860F-72C7-42F6-BE73-1593FA29C04A}
+		{01FEB238-F113-4A35-A8D8-DE434F0E4DF2} = {A1D44CEB-8695-41D3-9918-DD3930ECEB7F}
+	EndGlobalSection
+EndGlobal
