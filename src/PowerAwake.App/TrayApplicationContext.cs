@@ -21,6 +21,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly Icon errorIcon;
     private readonly SingleInstanceNotification instanceNotification;
     private readonly SynchronizationContext uiContext;
+    private readonly SmoothDimmingService smoothDimmer = new();
+    private readonly WindowsPowerPolicy powerPolicy = new();
     private AppText text = AppText.For("system");
 
     public TrayApplicationContext()
@@ -33,7 +35,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         logger = new FileAppLogger(Path.Combine(dataDirectory, "Logs"));
         logger.RemoveExpired(TimeSpan.FromDays(14));
         controller = new AwakeController(
-            new WindowsPowerPolicy(),
+            powerPolicy,
             new JsonFileStore<PowerSnapshot>(Path.Combine(dataDirectory, "recovery.json")),
             logger);
         controller.RecoverOnStartup();
@@ -62,6 +64,49 @@ internal sealed class TrayApplicationContext : ApplicationContext
         intervalTimer.Start();
         SystemEvents.SessionEnding += OnSessionEnding;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+
+        smoothDimmer.Configure(GetEffectiveDimSeconds, () => settings.DimBrightnessPercent, () => settings.SmoothDimmingDurationMs);
+        smoothDimmer.Start();
+        EnsureNativeDimDisabled();
+    }
+
+    private uint GetEffectiveDimSeconds()
+    {
+        if (!settings.SmoothDimmingEnabled)
+        {
+            return 0;
+        }
+
+        // Keep screen on suppresses dimming entirely while Awake is active.
+        if (controller.State is not AwakeState.Off && settings.KeepScreenOn)
+        {
+            return 0;
+        }
+
+        return settings.DisplayDimSeconds;
+    }
+
+    private void EnsureNativeDimDisabled()
+    {
+        // We animate the dim/undim ourselves; Windows' own dim timeout must stay off so it can't double-dim.
+        if (!smoothDimmer.IsSupported || !settings.SmoothDimmingEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var scheme = powerPolicy.GetActiveScheme();
+            var values = powerPolicy.ReadValues(scheme);
+            if (values.DimAc != 0 || values.DimDc != 0)
+            {
+                powerPolicy.WriteValues(scheme, values with { DimAc = 0, DimDc = 0 });
+            }
+        }
+        catch (Exception exception)
+        {
+            logger.Error("接管屏幕变暗时间失败，回退到系统原生变暗。", exception);
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -70,6 +115,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             intervalTimer.Stop();
             intervalTimer.Dispose();
+            smoothDimmer.Stop();
+            smoothDimmer.Dispose();
             instanceNotification.Dispose();
             SystemEvents.SessionEnding -= OnSessionEnding;
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
@@ -223,6 +270,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         try
         {
             action();
+            EnsureNativeDimDisabled();
             UpdateIcon();
             onSuccess?.Invoke();
         }
@@ -264,6 +312,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             settingsService.Save(updated);
             controller.ApplyNormalSettings(updated);
             settings = updated;
+            EnsureNativeDimDisabled();
             RefreshLocalizedUi();
         });
         form.ShowDialog();

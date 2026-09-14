@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (MAJOR.MINOR.PATCH)"
+        required: true
+        default: "1.1.0"
 
 permissions:
   contents: write
@@ -22,6 +27,17 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
+      - name: Resolve release version
+        shell: pwsh
+        env:
+          RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: |
+          $version = $env:RELEASE_REF -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Release versions must use MAJOR.MINOR.PATCH (received '$env:RELEASE_REF')."
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Test
         run: dotnet test PowerAwake.sln -p:TreatWarningsAsErrors=false
 
@@ -31,19 +47,37 @@ jobs:
           -c Release
           -r win-x64
           --self-contained true
+          -p:Version=$env:RELEASE_VERSION
+          -p:AssemblyVersion="$env:RELEASE_VERSION.0"
+          -p:FileVersion="$env:RELEASE_VERSION.0"
           -p:PublishSingleFile=false
           -p:DebugType=None
           -p:DebugSymbols=false
           -o publish/win-x64
 
+      - name: Package portable application
+        shell: pwsh
+        run: Compress-Archive -Path publish/win-x64/* -DestinationPath "dist/PowerAwake-$env:RELEASE_VERSION-win-x64-portable.zip"
+
       - name: Install Inno Setup
         run: choco install innosetup --no-progress --yes
 
       - name: Build installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\PowerAwake.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:RELEASE_VERSION" installer\PowerAwake.iss'
+
+      - name: Write checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii dist/SHA256SUMS.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/PowerAwake-Setup-*-win-x64.exe
+          files: |
+            dist/PowerAwake-Setup-*-win-x64.exe
+            dist/PowerAwake-*-win-x64-portable.zip
+            dist/SHA256SUMS.txt

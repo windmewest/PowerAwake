@@ -8,6 +8,8 @@ public sealed record AppSettings
     public uint DisplayDimSeconds { get; init; } = 120;
     public uint DisplayOffSeconds { get; init; } = 180;
     public byte DimBrightnessPercent { get; init; } = 50;
+    public bool SmoothDimmingEnabled { get; init; } = true;
+    public uint SmoothDimmingDurationMs { get; init; } = 1500;
     public bool ApplyToAc { get; init; } = true;
     public bool ApplyToDc { get; init; } = true;
     public bool KeepScreenOn { get; init; }

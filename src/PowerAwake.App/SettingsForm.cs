@@ -10,13 +10,17 @@ internal sealed class SettingsForm : Form
     private readonly TimeoutEditor displayOff;
     private readonly TrackBar brightness;
     private readonly Label brightnessValue;
+    private readonly CheckBox smoothDimming;
+    private readonly TrackBar smoothDimmingDuration;
+    private readonly Label smoothDimmingDurationValue;
     private readonly CheckBox applyToAc;
     private readonly CheckBox applyToDc;
     private readonly ComboBox language;
     private readonly Label errorLabel;
     private readonly AppSettings initialSettings;
     private readonly Action<AppSettings> save;
-    private readonly FlowLayoutPanel content;
+    private readonly Panel scrollHost;
+    private readonly TableLayoutPanel mainTable;
 
     public SettingsForm(AppSettings settings, AppText text, Action<AppSettings> save)
     {
@@ -25,19 +29,27 @@ internal sealed class SettingsForm : Form
         Text = text.SettingsTitle;
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = new Size(440, 460);
-        Size = new Size(600, 620);
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         MinimizeBox = true;
 
+        // Scale the window to the current monitor's working area so it fits on small or high-DPI screens.
+        var workingArea = (Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen)!.WorkingArea;
+        MinimumSize = new Size(Math.Min(420, workingArea.Width - 40), Math.Min(360, workingArea.Height - 40));
+        Size = new Size(Math.Min(620, (int)(workingArea.Width * 0.6)), Math.Min(760, (int)(workingArea.Height * 0.85)));
+
         sleep = new TimeoutEditor(settings.NormalSleepSeconds, CreateMinuteOptions(180), text);
         hibernate = new TimeoutEditor(settings.NormalHibernateSeconds, CreateMinuteOptions(720), text);
-        dim = new TimeoutEditor(settings.DisplayDimSeconds, new[] { 0u, 30u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u, 2700u, 3600u }, text);
+        dim = new TimeoutEditor(settings.DisplayDimSeconds, new[] { 0u, 5u, 10u, 15u, 30u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u, 2700u, 3600u }, text);
         displayOff = new TimeoutEditor(settings.DisplayOffSeconds, new[] { 0u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u, 2700u, 3600u }, text);
         brightness = new TrackBar { Minimum = 0, Maximum = 100, TickFrequency = 10, Value = settings.DimBrightnessPercent };
         brightnessValue = new Label { Text = $"{brightness.Value}%", AutoSize = true, TextAlign = ContentAlignment.MiddleLeft };
         brightness.ValueChanged += (_, _) => brightnessValue.Text = $"{brightness.Value}%";
+        smoothDimming = new CheckBox { Text = text.SmoothDimming, Checked = settings.SmoothDimmingEnabled, AutoSize = true, TabStop = true };
+        var durationTicks = (int)Math.Min(50, Math.Max(3, settings.SmoothDimmingDurationMs / 100));
+        smoothDimmingDuration = new TrackBar { Minimum = 3, Maximum = 50, TickFrequency = 5, Value = durationTicks };
+        smoothDimmingDurationValue = new Label { Text = FormatDuration(smoothDimmingDuration.Value), AutoSize = true, TextAlign = ContentAlignment.MiddleLeft };
+        smoothDimmingDuration.ValueChanged += (_, _) => smoothDimmingDurationValue.Text = FormatDuration(smoothDimmingDuration.Value);
         applyToAc = new CheckBox { Text = text.ApplyToAc, Checked = settings.ApplyToAc, AutoSize = true, TabStop = true };
         applyToDc = new CheckBox { Text = text.ApplyToDc, Checked = settings.ApplyToDc, AutoSize = true, TabStop = true };
         language = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
@@ -63,34 +75,76 @@ internal sealed class SettingsForm : Form
         buttonBar.Controls.Add(cancel);
         buttonBar.Controls.Add(apply);
 
-        content = new FlowLayoutPanel
+        scrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        mainTable = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
-            AutoScroll = true,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
+            ColumnCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Top,
             Padding = new Padding(16, 12, 16, 12)
         };
-        content.Controls.Add(CreateSection(text.SleepPolicy));
-        content.Controls.Add(CreateRow(text.Sleep, sleep));
-        content.Controls.Add(CreateRow(text.Hibernate, hibernate));
-        content.Controls.Add(CreateSection(text.DisplayPolicy));
-        content.Controls.Add(CreateRow(text.Dim, dim));
-        content.Controls.Add(CreateRow(text.DisplayOff, displayOff));
-        content.Controls.Add(CreateBrightnessRow(text));
-        content.Controls.Add(CreateSection(text.Scope));
-        content.Controls.Add(CreateToggleRow());
-        content.Controls.Add(CreateSection(text.Language));
-        content.Controls.Add(CreateRow(text.Language, language));
-        errorLabel = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(520, 0), Margin = new Padding(0, 10, 0, 0) };
-        content.Controls.Add(errorLabel);
+        mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-        Controls.Add(content);
+        AddSection(text.SleepPolicy);
+        AddRow(text.Sleep, sleep);
+        AddRow(text.Hibernate, hibernate);
+        AddSection(text.DisplayPolicy);
+        AddRow(text.Dim, dim);
+        AddRow(text.DisplayOff, displayOff);
+        AddRow(text.DimBrightness, CreateBrightnessValueControl());
+        AddFullWidthRow(smoothDimming);
+        AddRow(text.SmoothDimmingDuration, CreateDurationValueControl());
+        AddSection(text.Scope);
+        AddFullWidthRow(CreateToggleRow());
+        AddSection(text.Language);
+        AddRow(text.Language, language);
+        errorLabel = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(520, 0), Margin = new Padding(0, 10, 0, 0) };
+        AddFullWidthRow(errorLabel);
+
+        scrollHost.Controls.Add(mainTable);
         Controls.Add(buttonBar);
+        Controls.Add(scrollHost);
         AcceptButton = apply;
         CancelButton = cancel;
-        content.SizeChanged += (_, _) => ResizeContentRows();
-        Shown += (_, _) => ResizeContentRows();
+        scrollHost.ClientSizeChanged += (_, _) => SyncTableWidth();
+        Shown += (_, _) => SyncTableWidth();
+    }
+
+    private void SyncTableWidth()
+    {
+        // ClientSize already excludes the scrollbar width once AutoScroll shows one.
+        mainTable.Width = Math.Max(300, scrollHost.ClientSize.Width);
+    }
+
+    private void AddSection(string title)
+    {
+        var rowIndex = mainTable.RowCount++;
+        mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = CreateSection(title);
+        mainTable.Controls.Add(label, 0, rowIndex);
+        mainTable.SetColumnSpan(label, 2);
+    }
+
+    private void AddRow(string caption, Control value)
+    {
+        var rowIndex = mainTable.RowCount++;
+        mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var label = new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 10, 8, 2) };
+        value.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        value.Margin = new Padding(0, 4, 0, 4);
+        mainTable.Controls.Add(label, 0, rowIndex);
+        mainTable.Controls.Add(value, 1, rowIndex);
+    }
+
+    private void AddFullWidthRow(Control control)
+    {
+        var rowIndex = mainTable.RowCount++;
+        mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        control.Margin = new Padding(0, 4, 0, 4);
+        mainTable.Controls.Add(control, 0, rowIndex);
+        mainTable.SetColumnSpan(control, 2);
     }
 
     private Control CreateSection(string text) => new Label
@@ -101,30 +155,31 @@ internal sealed class SettingsForm : Form
         Margin = new Padding(0, 12, 0, 4)
     };
 
-    private Control CreateRow(string caption, Control value)
+    private Control CreateBrightnessValueControl()
     {
-        var row = new TableLayoutPanel { ColumnCount = 2, Height = 42, Margin = new Padding(0, 2, 0, 2) };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        var label = new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) };
-        value.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        row.Controls.Add(label, 0, 0);
-        row.Controls.Add(value, 1, 0);
-        return row;
+        var panel = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
+        brightness.Dock = DockStyle.Fill;
+        brightnessValue.Anchor = AnchorStyles.Left;
+        panel.Controls.Add(brightness, 0, 0);
+        panel.Controls.Add(brightnessValue, 1, 0);
+        return panel;
     }
 
-    private Control CreateBrightnessRow(AppText text)
+    private Control CreateDurationValueControl()
     {
-        var row = new TableLayoutPanel { ColumnCount = 3, Height = 56, Margin = new Padding(0, 2, 0, 2) };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 44));
-        brightness.Dock = DockStyle.Fill;
-        row.Controls.Add(new Label { Text = text.DimBrightness, AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        row.Controls.Add(brightness, 1, 0);
-        row.Controls.Add(brightnessValue, 2, 0);
-        return row;
+        var panel = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
+        smoothDimmingDuration.Dock = DockStyle.Fill;
+        smoothDimmingDurationValue.Anchor = AnchorStyles.Left;
+        panel.Controls.Add(smoothDimmingDuration, 0, 0);
+        panel.Controls.Add(smoothDimmingDurationValue, 1, 0);
+        return panel;
     }
+
+    private static string FormatDuration(int ticks) => $"{ticks / 10.0:0.0}s";
 
     private Control CreateToggleRow()
     {
@@ -132,18 +187,6 @@ internal sealed class SettingsForm : Form
         row.Controls.Add(applyToAc);
         row.Controls.Add(applyToDc);
         return row;
-    }
-
-    private void ResizeContentRows()
-    {
-        var width = Math.Max(360, content.ClientSize.Width - content.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 4);
-        foreach (Control control in content.Controls)
-        {
-            if (control is TableLayoutPanel || control is FlowLayoutPanel)
-            {
-                control.Width = width;
-            }
-        }
     }
 
     private void ApplySettings(object? sender, EventArgs e)
@@ -155,6 +198,8 @@ internal sealed class SettingsForm : Form
             DisplayDimSeconds = dim.GetSeconds(),
             DisplayOffSeconds = displayOff.GetSeconds(),
             DimBrightnessPercent = (byte)brightness.Value,
+            SmoothDimmingEnabled = smoothDimming.Checked,
+            SmoothDimmingDurationMs = (uint)(smoothDimmingDuration.Value * 100),
             ApplyToAc = applyToAc.Checked,
             ApplyToDc = applyToDc.Checked,
             LanguageCode = ((LanguageOption)language.SelectedItem!).Code
