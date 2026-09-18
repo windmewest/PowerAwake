@@ -57,7 +57,9 @@ jobs:
 
       - name: Package portable application
         shell: pwsh
-        run: Compress-Archive -Path publish/win-x64/* -DestinationPath "dist/PowerAwake-$env:RELEASE_VERSION-win-x64-portable.zip"
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path publish/win-x64/* -DestinationPath "dist/PowerAwake-$env:RELEASE_VERSION-win-x64-portable.zip"
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress --yes
