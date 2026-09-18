@@ -64,6 +64,13 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress --yes
 
+      - name: Install Simplified Chinese messages
+        shell: pwsh
+        run: |
+          $uri = "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/1ff90acc4ed4aee82b1cda43253243deee3daed4/ChineseSimplified.isl"
+          $destination = "C:\Program Files (x86)\Inno Setup 6\Languages\ChineseSimplified.isl"
+          Invoke-WebRequest -Uri $uri -OutFile $destination
+
       - name: Build installer
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:RELEASE_VERSION" installer\PowerAwake.iss'
 
