@@ -1,6 +1,6 @@
 #define AppName "PowerAwake"
 #ifndef AppVersion
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #endif
 #define AppPublisher "PowerAwake Contributors"
 #define AppExeName "PowerAwake.App.exe"
@@ -42,6 +42,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExeName}"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "powerAwake"; ValueData: """{app}\{#AppExeName}"" --startup"; Tasks: autostart; Flags: uninsdeletevalue

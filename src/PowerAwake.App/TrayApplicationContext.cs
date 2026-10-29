@@ -1,3 +1,4 @@
+using PowerAwake.App.Ui;
 using PowerAwake.Core.Models;
 using PowerAwake.Core.Services;
 using PowerAwake.Windows.Power;
@@ -15,15 +16,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private AppSettings settings;
     private readonly System.Windows.Forms.Timer intervalTimer;
     private readonly FileAppLogger logger;
-    private readonly Icon offIcon;
-    private readonly Icon indefiniteIcon;
-    private readonly Icon intervalIcon;
-    private readonly Icon errorIcon;
+    private Icon offIcon;
+    private Icon indefiniteIcon;
+    private Icon intervalIcon;
+    private Icon errorIcon;
     private readonly SingleInstanceNotification instanceNotification;
     private readonly SynchronizationContext uiContext;
     private readonly SmoothDimmingService smoothDimmer = new();
     private readonly WindowsPowerPolicy powerPolicy = new();
+    private readonly List<Image> menuImages = new();
+    private ToolStripLabel? statusLabel;
     private AppText text = AppText.For("system");
+    private SettingsText extraText = SettingsText.For("system");
 
     public TrayApplicationContext()
     {
@@ -32,6 +36,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         settings = settingsService.Load();
         text = AppText.For(settings.LanguageCode);
+        extraText = SettingsText.For(settings.LanguageCode);
         logger = new FileAppLogger(Path.Combine(dataDirectory, "Logs"));
         logger.RemoveExpired(TimeSpan.FromDays(14));
         controller = new AwakeController(
@@ -44,10 +49,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             startupService.SetEnabled(Application.ExecutablePath, true);
         }
 
-        offIcon = StateIconFactory.Create(TrayIconState.Off);
-        indefiniteIcon = StateIconFactory.Create(TrayIconState.Indefinite);
-        intervalIcon = StateIconFactory.Create(TrayIconState.Interval);
-        errorIcon = StateIconFactory.Create(TrayIconState.Error);
+        (offIcon, indefiniteIcon, intervalIcon, errorIcon) = CreateIcons();
+        Theme.Watch();
+        Theme.Changed += OnThemeChanged;
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         notifyIcon = new NotifyIcon
         {
@@ -65,9 +70,36 @@ internal sealed class TrayApplicationContext : ApplicationContext
         SystemEvents.SessionEnding += OnSessionEnding;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
-        smoothDimmer.Configure(GetEffectiveDimSeconds, () => settings.DimBrightnessPercent, () => settings.SmoothDimmingDurationMs);
+        smoothDimmer.Configure(GetEffectiveDimSeconds, () => settings.DimBrightnessPercent, () => settings.SmoothDimmingDurationMs, () => settings.AllowSoftwareDimming);
         smoothDimmer.Start();
         EnsureNativeDimDisabled();
+    }
+
+    private static (Icon Off, Icon Indefinite, Icon Interval, Icon Error) CreateIcons()
+    {
+        var dark = Theme.TaskbarUsesDark;
+        return (
+            StateIconFactory.Create(TrayIconState.Off, dark),
+            StateIconFactory.Create(TrayIconState.Indefinite, dark),
+            StateIconFactory.Create(TrayIconState.Interval, dark),
+            StateIconFactory.Create(TrayIconState.Error, dark));
+    }
+
+    private void OnThemeChanged()
+    {
+        var previous = new[] { offIcon, indefiniteIcon, intervalIcon, errorIcon };
+        (offIcon, indefiniteIcon, intervalIcon, errorIcon) = CreateIcons();
+        RefreshLocalizedUi();
+        foreach (var icon in previous)
+        {
+            icon.Dispose();
+        }
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        // Monitors were added/removed or resized: re-detect on a worker so the UI thread never waits on WMI/DDC.
+        _ = Task.Run(smoothDimmer.Refresh);
     }
 
     private uint GetEffectiveDimSeconds()
@@ -120,9 +152,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             instanceNotification.Dispose();
             SystemEvents.SessionEnding -= OnSessionEnding;
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+            Theme.Changed -= OnThemeChanged;
             try
             {
-                controller.Stop();
+                controller.StopAndApplyNormalSettings(settings);
             }
             catch (Exception exception)
             {
@@ -135,6 +169,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             indefiniteIcon.Dispose();
             intervalIcon.Dispose();
             errorIcon.Dispose();
+            foreach (var image in menuImages)
+            {
+                image.Dispose();
+            }
+
+            menuImages.Clear();
         }
 
         base.Dispose(disposing);
@@ -142,21 +182,71 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private ContextMenuStrip CreateMenu()
     {
-        var menu = new ContextMenuStrip();
-        var off = new ToolStripMenuItem(text.AwakeOff) { Checked = true };
-        var indefinite = new ToolStripMenuItem(text.KeepAwakeIndefinitely);
-        var interval = new ToolStripMenuItem(text.KeepAwakeInterval);
-        var keepScreenOn = new ToolStripMenuItem(text.KeepScreenOn) { CheckOnClick = true, Checked = settings.KeepScreenOn };
-        var exit = new ToolStripMenuItem(text.Exit);
-        var startWithWindows = new ToolStripMenuItem(text.StartWithWindows) { CheckOnClick = true, Checked = settings.StartWithWindows };
+        var palette = Theme.Current;
+        var menu = FluentMenuRenderer.CreateMenu(palette);
+        var iconSize = (int)Math.Round(18 * menu.DeviceDpi / 96.0);
+        menu.ImageScalingSize = new Size(iconSize, iconSize);
+        foreach (var image in menuImages)
+        {
+            image.Dispose();
+        }
+
+        menuImages.Clear();
+
+        Image Img(Glyph glyph, Color? color = null)
+        {
+            var image = Glyphs.Render(glyph, color ?? palette.Text, iconSize);
+            menuImages.Add(image);
+            return image;
+        }
+
+        ToolStripMenuItem Item(string caption, Glyph glyph)
+        {
+            var item = new ToolStripMenuItem(caption) { Image = Img(glyph) };
+            FluentMenuRenderer.Style(item, palette);
+            return item;
+        }
+
+        var header = new ToolStripLabel("powerAwake")
+        {
+            Font = Fonts.Create(10f, FontStyle.Bold),
+            ForeColor = palette.Text,
+            Image = Img(Glyph.Infinity, palette.Accent),
+            Padding = new Padding(2, 6, 2, 0)
+        };
+
+        statusLabel = new ToolStripLabel(text.AwakeOff)
+        {
+            Font = Fonts.Create(8.5f),
+            ForeColor = palette.SubText,
+            Padding = new Padding(2, 0, 2, 6)
+        };
+
+        var off = Item(text.AwakeOff, Glyph.Power);
+        var indefinite = Item(text.KeepAwakeIndefinitely, Glyph.Infinity);
+        var interval = Item(text.KeepAwakeInterval, Glyph.Timer);
+        var keepScreenOn = Item(text.KeepScreenOn, Glyph.Monitor);
+        keepScreenOn.CheckOnClick = true;
+        keepScreenOn.Checked = settings.KeepScreenOn;
+        keepScreenOn.Tag = FluentMenuRenderer.ToggleTag;
+        var settingsItem = Item(text.Settings, Glyph.Gear);
+        var startWithWindows = Item(text.StartWithWindows, Glyph.Startup);
+        startWithWindows.CheckOnClick = true;
+        startWithWindows.Checked = settings.StartWithWindows;
+        startWithWindows.Tag = FluentMenuRenderer.ToggleTag;
+        var exit = Item(text.Exit, Glyph.Exit);
 
         off.Click += (_, _) => RunAction(controller.Stop, () => ShowNotification(text.ClosedTitle, text.ClosedMessage));
         indefinite.Click += (_, _) => RunAction(() => controller.StartIndefinitely(settings), () => ShowNotification(text.OpenedTitle, text.OpenedIndefinite));
-        interval.DropDownItems.Add($"15 {text.Minutes}", null, (_, _) => StartInterval(TimeSpan.FromMinutes(15)));
-        interval.DropDownItems.Add($"30 {text.Minutes}", null, (_, _) => StartInterval(TimeSpan.FromMinutes(30)));
-        interval.DropDownItems.Add("1 小时", null, (_, _) => StartInterval(TimeSpan.FromHours(1)));
-        interval.DropDownItems.Add("2 小时", null, (_, _) => StartInterval(TimeSpan.FromHours(2)));
-        interval.DropDownItems.Add(text.Custom, null, (_, _) => StartCustomInterval());
+        AddIntervalOption(interval, $"15 {text.Minutes}", TimeSpan.FromMinutes(15), palette);
+        AddIntervalOption(interval, $"30 {text.Minutes}", TimeSpan.FromMinutes(30), palette);
+        AddIntervalOption(interval, $"1 {extraText.Hours}", TimeSpan.FromHours(1), palette);
+        AddIntervalOption(interval, $"2 {extraText.Hours}", TimeSpan.FromHours(2), palette);
+        var custom = new ToolStripMenuItem(text.Custom);
+        custom.Click += (_, _) => StartCustomInterval();
+        interval.DropDownItems.Add(custom);
+        StyleSubItem(custom, palette);
+        FluentMenuRenderer.StyleDropDown(interval, palette);
         keepScreenOn.CheckedChanged += (_, _) => RunAction(() =>
         {
             settings = settings with { KeepScreenOn = keepScreenOn.Checked };
@@ -169,21 +259,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
             settings = settings with { StartWithWindows = startWithWindows.Checked };
             settingsService.Save(settings);
         });
+        settingsItem.Click += (_, _) => OpenSettings();
         exit.Click += (_, _) => ExitThread();
 
-        menu.Items.Add(new ToolStripLabel("powerAwake"));
+        menu.Items.Add(header);
+        menu.Items.Add(statusLabel);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(off);
         menu.Items.Add(indefinite);
         menu.Items.Add(interval);
         menu.Items.Add(keepScreenOn);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(text.Settings, null, (_, _) => OpenSettings());
+        menu.Items.Add(settingsItem);
         menu.Items.Add(startWithWindows);
         menu.Items.Add(exit);
-        menu.Opening += (_, _) => UpdateMenu(menu, off, indefinite, keepScreenOn);
+        menu.Opening += (_, _) => UpdateMenu(off, indefinite, interval, keepScreenOn);
         return menu;
     }
+
+    private void AddIntervalOption(ToolStripMenuItem parent, string caption, TimeSpan duration, Palette palette)
+    {
+        var option = new ToolStripMenuItem(caption);
+        option.Click += (_, _) => StartInterval(duration);
+        parent.DropDownItems.Add(option);
+        StyleSubItem(option, palette);
+    }
+
+    private static void StyleSubItem(ToolStripMenuItem item, Palette palette)
+    {
+        item.ForeColor = palette.Text;
+        item.Padding = new Padding(2, 7, 2, 7);
+        item.Margin = new Padding(0, 1, 0, 1);
+    }
+
 
     private void StartInterval(TimeSpan duration)
     {
@@ -256,7 +364,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         try
         {
-            controller.Stop();
+            controller.StopAndApplyNormalSettings(settings);
             logger.Info($"系统会话结束（{e.Reason}），已尝试恢复电源策略。");
         }
         catch (Exception exception)
@@ -298,24 +406,46 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
     }
 
-    private void UpdateMenu(ContextMenuStrip menu, ToolStripMenuItem off, ToolStripMenuItem indefinite, ToolStripMenuItem keepScreenOn)
+    private void UpdateMenu(ToolStripMenuItem off, ToolStripMenuItem indefinite, ToolStripMenuItem interval, ToolStripMenuItem keepScreenOn)
     {
         off.Checked = controller.State is AwakeState.Off;
         indefinite.Checked = controller.State is AwakeState.Indefinite;
+        interval.Checked = controller.State is AwakeState.Interval;
+        if (statusLabel is not null)
+        {
+            statusLabel.Text = controller.State switch
+            {
+                AwakeState.Indefinite => text.OpenedIndefinite,
+                AwakeState.Interval running => string.Format(extraText.UntilTime, running.EndTimeUtc.LocalDateTime.ToString("t")),
+                AwakeState.Error => text.ErrorTitle,
+                _ => text.ClosedTitle
+            };
+        }
+
         UpdateIcon();
     }
 
     private void OpenSettings()
     {
-        using var form = new SettingsForm(settings, text, updated =>
+        using var form = new SettingsForm(settings, text, smoothDimmer.Capabilities, updated =>
         {
+            var softwareChanged = updated.AllowSoftwareDimming != settings.AllowSoftwareDimming;
             settingsService.Save(updated);
             controller.ApplyNormalSettings(updated);
             settings = updated;
+            if (softwareChanged)
+            {
+                smoothDimmer.Refresh();
+            }
+
             EnsureNativeDimDisabled();
             RefreshLocalizedUi();
         });
         form.ShowDialog();
+        if (form.UpdateLaunched)
+        {
+            ExitThread();
+        }
     }
 
     private void BeginInvokeOpenSettings()
@@ -335,6 +465,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void RefreshLocalizedUi()
     {
         text = AppText.For(settings.LanguageCode);
+        extraText = SettingsText.For(settings.LanguageCode);
         var previousMenu = notifyIcon.ContextMenuStrip;
         notifyIcon.ContextMenuStrip = CreateMenu();
         previousMenu?.Dispose();

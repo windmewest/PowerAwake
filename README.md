@@ -11,21 +11,23 @@ PowerAwake is a lightweight Windows 11 tray application that manages the active 
 - 常驻系统托盘，双击无穷图标可在“Awake 关闭”和“无限期保持唤醒”之间切换。
 - 无限期或定时保持唤醒；关闭、到期、退出或下一次启动时会恢复保存的电源策略。
 - 支持 `Keep screen on`、屏幕变暗/关闭时间、变暗亮度，以及可调时长的平滑变暗。
+- 笔记本内屏使用 WMI，支持 DDC/CI 的外接显示器使用硬件调光；其他台式机显示器可选用软件遮罩渐变。
+- 右键菜单和设置窗口采用现代 Windows 11 设计，并跟随系统浅色/深色主题切换图标与配色。
 - 可单独选择将设置应用到 AC（接通电源）和 DC（使用电池）。
 - Windows 通知、中文/English/Español 界面、当前用户自启动与单实例运行。
-- 不收集输入、屏幕内容或遥测数据，也不联网。
+- 不收集输入、屏幕内容或遥测数据；仅在设置窗口检查或安装更新时连接 GitHub。
 
 ### 安装
 
-1. 在 GitHub Releases 下载 `PowerAwake-Setup-1.1.0-win-x64.exe`。
+1. 在 GitHub Releases 下载 `PowerAwake-Setup-1.2.0-win-x64.exe`。
 2. 运行安装程序。程序安装到当前用户目录，不需要管理员权限。
 3. 在任务栏通知区域找到无穷图标。右键可使用完整菜单；双击可快捷切换开关。
 
-无需安装时，也可以下载 `PowerAwake-1.1.0-win-x64-portable.zip`。发布页同时提供 `SHA256SUMS.txt` 用于校验文件完整性。
+无需安装时，也可以下载 `PowerAwake-1.2.0-win-x64-portable.zip`。发布页同时提供 `SHA256SUMS.txt` 用于校验文件完整性。
 
 ### 发布者
 
-创建并推送类似 `v1.1.0` 的 Git 标签后，仓库中的 GitHub Actions 会自动测试、构建安装包并创建 GitHub Release。
+创建并推送类似 `v1.2.0` 的 Git 标签后，仓库中的 GitHub Actions 会自动测试、构建安装包并创建 GitHub Release。
 
 ### 卸载
 
@@ -44,21 +46,23 @@ PowerAwake is a lightweight Windows 11 tray application that manages the active 
 - Runs in the Windows notification area. Double-click the infinity icon to toggle between Awake off and indefinite Awake.
 - Keeps the system awake indefinitely or for a timed interval, then restores the saved power policy when disabled, expired, exited, or recovered at the next start.
 - Supports **Keep screen on**, display dim/off timeouts, dim brightness, and configurable smooth dimming.
+- Uses WMI for laptop panels, DDC/CI for compatible external monitors, and an optional software-overlay fallback for other desktop monitors.
+- Modern Windows 11 tray and Settings UI with icons and colors that follow the system light/dark theme.
 - Apply settings independently to AC power and battery power.
 - Windows notifications, Chinese/English/Spanish UI, per-user startup, and single-instance operation.
-- No telemetry, network activity, input capture, or screen-content collection.
+- No telemetry, input capture, or screen-content collection. Network access is limited to checking or installing updates from GitHub in Settings.
 
 ### Install
 
-1. Download `PowerAwake-Setup-1.1.0-win-x64.exe` from GitHub Releases.
+1. Download `PowerAwake-Setup-1.2.0-win-x64.exe` from GitHub Releases.
 2. Run the installer. It installs for the current user and does not require administrator rights.
 3. Find the infinity icon in the notification area. Right-click for the full menu; double-click for the fast toggle.
 
-For a no-install option, download `PowerAwake-1.1.0-win-x64-portable.zip`. Each release also includes `SHA256SUMS.txt` for integrity verification.
+For a no-install option, download `PowerAwake-1.2.0-win-x64-portable.zip`. Each release also includes `SHA256SUMS.txt` for integrity verification.
 
 ### Publishing
 
-Create and push a Git tag such as `v1.1.0`. The included GitHub Actions workflow tests the project, builds the installer, and creates a GitHub Release automatically.
+Create and push a Git tag such as `v1.2.0`. The included GitHub Actions workflow tests the project, builds the installer, and creates a GitHub Release automatically.
 
 ### Uninstall
 
@@ -77,21 +81,23 @@ Uninstall PowerAwake from Windows **Installed apps**, or run the uninstaller in 
 - Se ejecuta en el area de notificacion de Windows. Haz doble clic en el icono de infinito para alternar entre Awake desactivado y Awake indefinido.
 - Mantiene el sistema activo de forma indefinida o durante un intervalo y restaura la politica de energia guardada al desactivarse, vencer el intervalo, salir o recuperarse en el siguiente inicio.
 - Incluye **Mantener pantalla encendida**, tiempos de atenuacion/apagado, brillo de atenuacion y atenuacion suave configurable.
+- Usa WMI para pantallas integradas, DDC/CI para monitores externos compatibles y una capa de software opcional para otros monitores de escritorio.
+- Menu de bandeja y ventana de ajustes con diseno moderno de Windows 11, iconos y colores adaptados al tema claro/oscuro.
 - Permite aplicar la configuracion de forma independiente con corriente AC y con bateria.
 - Notificaciones de Windows, interfaz en chino/ingles/espanol, inicio automatico por usuario y una sola instancia.
-- Sin telemetria, actividad de red, captura de entrada ni recopilacion del contenido de pantalla.
+- Sin telemetria, captura de entrada ni recopilacion del contenido de pantalla. La red solo se usa para buscar o instalar actualizaciones desde GitHub.
 
 ### Instalacion
 
-1. Descarga `PowerAwake-Setup-1.1.0-win-x64.exe` desde GitHub Releases.
+1. Descarga `PowerAwake-Setup-1.2.0-win-x64.exe` desde GitHub Releases.
 2. Ejecuta el instalador. Se instala para el usuario actual y no requiere permisos de administrador.
 3. Busca el icono de infinito en el area de notificacion. Haz clic derecho para el menu completo y doble clic para el cambio rapido.
 
-Como opcion sin instalacion, descarga `PowerAwake-1.1.0-win-x64-portable.zip`. Cada version tambien incluye `SHA256SUMS.txt` para verificar la integridad.
+Como opcion sin instalacion, descarga `PowerAwake-1.2.0-win-x64-portable.zip`. Cada version tambien incluye `SHA256SUMS.txt` para verificar la integridad.
 
 ### Publicacion
 
-Crea y envia una etiqueta de Git como `v1.1.0`. El flujo de GitHub Actions incluido prueba el proyecto, genera el instalador y crea automaticamente una version de GitHub Releases.
+Crea y envia una etiqueta de Git como `v1.2.0`. El flujo de GitHub Actions incluido prueba el proyecto, genera el instalador y crea automaticamente una version de GitHub Releases.
 
 ### Desinstalacion
 

@@ -14,7 +14,7 @@ internal static class StateIconFactory
 {
     private const int CanvasSize = 32;
 
-    public static Icon Create(TrayIconState state)
+    public static Icon Create(TrayIconState state, bool darkTaskbar)
     {
         using var bitmap = new Bitmap(CanvasSize, CanvasSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -24,10 +24,10 @@ internal static class StateIconFactory
 
         var color = state switch
         {
-            TrayIconState.Off => Color.FromArgb(118, 125, 135),
-            TrayIconState.Indefinite => Color.FromArgb(0, 148, 104),
-            TrayIconState.Interval => Color.FromArgb(218, 132, 0),
-            TrayIconState.Error => Color.FromArgb(198, 48, 48),
+            TrayIconState.Off => darkTaskbar ? Color.FromArgb(206, 210, 217) : Color.FromArgb(92, 98, 108),
+            TrayIconState.Indefinite => darkTaskbar ? Color.FromArgb(52, 211, 153) : Color.FromArgb(0, 148, 104),
+            TrayIconState.Interval => darkTaskbar ? Color.FromArgb(251, 176, 52) : Color.FromArgb(218, 132, 0),
+            TrayIconState.Error => darkTaskbar ? Color.FromArgb(255, 107, 107) : Color.FromArgb(198, 48, 48),
             _ => Color.Gray
         };
 

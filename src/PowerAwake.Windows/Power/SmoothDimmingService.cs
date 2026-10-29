@@ -1,54 +1,65 @@
 namespace PowerAwake.Windows.Power;
 
 /// <summary>
-/// Takes over the "dim before sleep" transition from Windows and animates the panel
-/// backlight smoothly instead of the abrupt jump Windows performs when the native
-/// display-dim timeout elapses (and when it restores brightness on input).
-/// Windows' own auto-dim setting must be disabled by the caller (Dim = 0) so it does
+/// Takes over the "dim before sleep" transition from Windows and animates every dimmable display
+/// smoothly instead of the abrupt jump Windows performs when the native display-dim timeout
+/// elapses (and when it restores brightness on input).
+/// Displays are dimmed through the best method each one offers: the laptop panel (WMI), external
+/// monitors with DDC/CI, or - when allowed and nothing else works, as on many desktop monitors -
+/// a software overlay. Windows' own auto-dim must be disabled by the caller (Dim = 0) so it does
 /// not fight this service; the native "turn off display" timeout is left untouched.
 /// </summary>
 public sealed class SmoothDimmingService : IDisposable
 {
     private const int PollIntervalMs = 250;
-    private const int MinFadeSteps = 12;
-    private const int MaxFadeSteps = 40;
+    private const int FrameIntervalMs = 20;
 
-    private readonly DisplayBrightnessController brightness = new();
     private readonly System.Threading.Timer pollTimer;
-    private readonly object syncRoot = new();
+    private readonly object stateLock = new();
 
     private Func<uint> getDimSeconds = () => 0;
     private Func<byte> getDimBrightness = () => 50;
     private Func<uint> getFadeDurationMs = () => 1500;
+    private Func<bool> getAllowSoftware = () => true;
 
+    private IReadOnlyList<IBrightnessTarget> targets = Array.Empty<IBrightnessTarget>();
     private CancellationTokenSource? fadeCts;
-    private byte? normalBrightnessSnapshot;
+    private Task fadeTask = Task.CompletedTask;
+    private byte?[]? snapshot;
     private bool isDimmed;
+    private bool started;
 
     public SmoothDimmingService()
     {
-        IsSupported = brightness.IsAvailable;
         pollTimer = new System.Threading.Timer(_ => Poll(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
-    /// <summary>False when the display has no WMI-controllable backlight (e.g. external monitor only).</summary>
-    public bool IsSupported { get; }
+    public DisplayCapabilities Capabilities { get; private set; } = new(0, 0, 0);
 
-    public void Configure(Func<uint> dimSecondsProvider, Func<byte> dimBrightnessProvider, Func<uint> fadeDurationMsProvider)
+    /// <summary>False when no display can be dimmed (e.g. software dimming disabled and no hardware control).</summary>
+    public bool IsSupported => Capabilities.IsAnySupported;
+
+    public void Configure(
+        Func<uint> dimSecondsProvider,
+        Func<byte> dimBrightnessProvider,
+        Func<uint> fadeDurationMsProvider,
+        Func<bool>? allowSoftwareProvider = null)
     {
-        lock (syncRoot)
+        lock (stateLock)
         {
             getDimSeconds = dimSecondsProvider;
             getDimBrightness = dimBrightnessProvider;
             getFadeDurationMs = fadeDurationMsProvider;
+            getAllowSoftware = allowSoftwareProvider ?? (() => true);
         }
     }
 
     public void Start()
     {
-        if (!IsSupported)
+        Refresh();
+        lock (stateLock)
         {
-            return;
+            started = true;
         }
 
         pollTimer.Change(PollIntervalMs, PollIntervalMs);
@@ -57,133 +68,204 @@ public sealed class SmoothDimmingService : IDisposable
     public void Stop()
     {
         pollTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        CancelFade();
-        RestoreImmediatelyIfDimmed();
+        lock (stateLock)
+        {
+            started = false;
+            CancelFadeAndWait();
+            RestoreImmediatelyIfDimmed();
+        }
+    }
+
+    /// <summary>Re-detects displays (hot-plug, resolution change, or a changed software-dimming setting).</summary>
+    public void Refresh()
+    {
+        lock (stateLock)
+        {
+            CancelFadeAndWait();
+            RestoreImmediatelyIfDimmed();
+            DisposeTargets();
+            targets = DisplayBrightnessController.Discover(getAllowSoftware());
+            Capabilities = DisplayBrightnessController.Describe(targets);
+        }
     }
 
     private void Poll()
     {
-        uint dimSeconds;
-        byte dimTarget;
-        lock (syncRoot)
+        if (!Monitor.TryEnter(stateLock))
         {
-            dimSeconds = getDimSeconds();
-            dimTarget = getDimBrightness();
-        }
-
-        if (dimSeconds == 0)
-        {
-            if (isDimmed)
-            {
-                BeginRestore();
-            }
-
             return;
         }
 
-        var idle = IdleTimeReader.GetIdleTime();
-        if (!isDimmed && idle.TotalSeconds >= dimSeconds)
+        try
         {
-            BeginDim(dimTarget);
+            if (!started)
+            {
+                return;
+            }
+
+            var dimSeconds = getDimSeconds();
+            if (dimSeconds == 0 || targets.Count == 0)
+            {
+                if (isDimmed)
+                {
+                    BeginRestore();
+                }
+
+                return;
+            }
+
+            var idle = IdleTimeReader.GetIdleTime();
+            if (!isDimmed && idle.TotalSeconds >= dimSeconds)
+            {
+                BeginDim(getDimBrightness());
+            }
+            else if (isDimmed && idle.TotalSeconds < dimSeconds)
+            {
+                BeginRestore();
+            }
         }
-        else if (isDimmed && idle.TotalSeconds < dimSeconds)
+        finally
         {
-            BeginRestore();
+            Monitor.Exit(stateLock);
         }
     }
 
     private void BeginDim(byte targetPercent)
     {
-        var startBrightness = brightness.GetBrightness();
-        if (startBrightness is null)
+        var current = targets.Select(t => t.Get()).ToArray();
+        if (current.All(value => value is null))
         {
             return;
         }
 
-        CancelFade();
-        normalBrightnessSnapshot ??= startBrightness;
+        CancelFadeAndWait();
+        snapshot ??= current;
         isDimmed = true;
-        fadeCts = new CancellationTokenSource();
-        _ = FadeAsync(startBrightness.Value, targetPercent, fadeCts.Token);
+        var goals = current.Select(value => value is byte v ? (byte?)Math.Min(v, targetPercent) : null).ToArray();
+        StartFade(current, goals);
     }
 
     private void BeginRestore()
     {
-        var target = normalBrightnessSnapshot;
-        if (target is null)
+        var saved = snapshot;
+        if (saved is null)
         {
             isDimmed = false;
             return;
         }
 
-        CancelFade();
+        CancelFadeAndWait();
         isDimmed = false;
-        normalBrightnessSnapshot = null;
-        var current = brightness.GetBrightness() ?? target.Value;
+        snapshot = null;
+        var current = targets.Select((t, i) => t.Get() ?? saved[i]).ToArray();
+        StartFade(current, saved);
+    }
+
+    private void StartFade(byte?[] from, byte?[] to)
+    {
         fadeCts = new CancellationTokenSource();
-        _ = FadeAsync(current, target.Value, fadeCts.Token);
+        var token = fadeCts.Token;
+        var activeTargets = targets;
+        var duration = getFadeDurationMs();
+        fadeTask = Task.Run(() => FadeAsync(activeTargets, from, to, duration, token));
     }
 
     private void RestoreImmediatelyIfDimmed()
     {
-        if (isDimmed && normalBrightnessSnapshot is byte value)
+        if (isDimmed && snapshot is { } saved)
         {
-            brightness.SetBrightness(value);
+            for (var i = 0; i < targets.Count && i < saved.Length; i++)
+            {
+                if (saved[i] is byte value)
+                {
+                    targets[i].Set(value);
+                }
+            }
         }
 
         isDimmed = false;
-        normalBrightnessSnapshot = null;
+        snapshot = null;
     }
 
-    private void CancelFade()
+    private void CancelFadeAndWait()
     {
-        fadeCts?.Cancel();
-        fadeCts?.Dispose();
-        fadeCts = null;
-    }
-
-    private async Task FadeAsync(byte from, byte to, CancellationToken token)
-    {
-        if (from == to)
+        if (fadeCts is null)
         {
-            brightness.SetBrightness(to);
             return;
         }
 
-        uint fadeDurationMs;
-        lock (syncRoot)
+        fadeCts.Cancel();
+        try
         {
-            fadeDurationMs = getFadeDurationMs();
+            fadeTask.Wait(TimeSpan.FromSeconds(3));
+        }
+        catch (AggregateException)
+        {
+            // A cancelled fade is expected.
         }
 
-        // Fewer steps for small brightness deltas: keeps the number of WMI round-trips (the real
-        // cost of a fade) proportional to how much there is to animate instead of a fixed cadence.
-        var steps = Math.Clamp(Math.Abs(to - from), MinFadeSteps, MaxFadeSteps);
-        var stepInterval = fadeDurationMs / (double)steps;
+        fadeCts.Dispose();
+        fadeCts = null;
+    }
+
+    private void DisposeTargets()
+    {
+        foreach (var target in targets)
+        {
+            target.Dispose();
+        }
+
+        targets = Array.Empty<IBrightnessTarget>();
+        Capabilities = new DisplayCapabilities(0, 0, 0);
+    }
+
+    private static async Task FadeAsync(IReadOnlyList<IBrightnessTarget> fadeTargets, byte?[] from, byte?[] to, uint durationMs, CancellationToken token)
+    {
+        var last = new int[fadeTargets.Count];
+        Array.Fill(last, -1);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        for (var i = 1; i <= steps; i++)
+        // Progress is derived from wall-clock time rather than a fixed step count, so slow
+        // backends (WMI, DDC/CI) skip intermediate values instead of stretching the fade.
+        while (!token.IsCancellationRequested)
         {
-            if (token.IsCancellationRequested)
+            var progress = durationMs == 0 ? 1.0 : Math.Min(1.0, stopwatch.Elapsed.TotalMilliseconds / durationMs);
+            var eased = EaseInOutQuad(progress);
+
+            void Apply(int i)
+            {
+                if (from[i] is not byte start || to[i] is not byte end)
+                {
+                    return;
+                }
+
+                var value = (int)Math.Round(start + ((end - start) * eased));
+                if (value == last[i])
+                {
+                    return;
+                }
+
+                last[i] = value;
+                fadeTargets[i].Set((byte)value);
+            }
+
+            if (fadeTargets.Count > 1)
+            {
+                Parallel.For(0, fadeTargets.Count, Apply);
+            }
+            else if (fadeTargets.Count == 1)
+            {
+                Apply(0);
+            }
+
+            if (progress >= 1.0)
             {
                 return;
             }
 
-            var linearT = (double)i / steps;
-            var value = (byte)Math.Round(from + ((to - from) * EaseInOutQuad(linearT)));
-            brightness.SetBrightness(value);
-
-            // Schedule against the original start time so WMI call latency doesn't accumulate
-            // and stretch the fade beyond the duration the user configured.
-            var remaining = (stepInterval * i) - stopwatch.Elapsed.TotalMilliseconds;
-            if (remaining <= 0)
-            {
-                continue;
-            }
-
             try
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(remaining), token).ConfigureAwait(false);
+                await Task.Delay(FrameIntervalMs, token).ConfigureAwait(false);
             }
             catch (TaskCanceledException)
             {
@@ -197,7 +279,12 @@ public sealed class SmoothDimmingService : IDisposable
     public void Dispose()
     {
         pollTimer.Dispose();
-        CancelFade();
-        brightness.Dispose();
+        lock (stateLock)
+        {
+            started = false;
+            CancelFadeAndWait();
+            RestoreImmediatelyIfDimmed();
+            DisposeTargets();
+        }
     }
 }

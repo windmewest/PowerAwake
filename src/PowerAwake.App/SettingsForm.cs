@@ -1,213 +1,479 @@
+﻿using PowerAwake.App.Ui;
 using PowerAwake.Core.Models;
+using PowerAwake.Windows.Power;
 
 namespace PowerAwake.App;
 
 internal sealed class SettingsForm : Form
 {
+    private readonly Palette palette = Theme.Current;
+    private readonly AppText text;
+    private readonly SettingsText extra;
+    private readonly AppSettings initialSettings;
+    private readonly Action<AppSettings> save;
+    private readonly bool hasBattery;
+
     private readonly TimeoutEditor sleep;
     private readonly TimeoutEditor hibernate;
     private readonly TimeoutEditor dim;
     private readonly TimeoutEditor displayOff;
-    private readonly TrackBar brightness;
+    private readonly FluentSlider brightness = new(Theme.Current);
     private readonly Label brightnessValue;
-    private readonly CheckBox smoothDimming;
-    private readonly TrackBar smoothDimmingDuration;
-    private readonly Label smoothDimmingDurationValue;
-    private readonly CheckBox applyToAc;
-    private readonly CheckBox applyToDc;
-    private readonly ComboBox language;
-    private readonly Label errorLabel;
-    private readonly AppSettings initialSettings;
-    private readonly Action<AppSettings> save;
+    private readonly ToggleSwitch smoothDimming;
+    private readonly FluentSlider duration = new(Theme.Current) { Minimum = 3, Maximum = 50 };
+    private readonly Label durationValue;
+    private readonly ToggleSwitch softwareDimming;
+    private readonly ToggleSwitch applyToAc;
+    private readonly ToggleSwitch applyToDc;
+    private readonly DropdownBox language;
+    private readonly LanguageOption[] languageOptions;
+
+    private readonly SettingRow brightnessRow;
+    private readonly SettingRow smoothRow;
+    private readonly SettingRow durationRow;
+    private readonly SettingRow softwareRow;
+    private readonly SettingRow dimHintRow;
     private readonly Panel scrollHost;
-    private readonly TableLayoutPanel mainTable;
+    private readonly VStack content;
+    private readonly Label message;
+    private readonly FluentButton saveButton;
+    private readonly FluentButton updateButton;
+    private readonly SettingRow aboutRow;
+    private readonly UpdateService updater = new();
+    private readonly CancellationTokenSource updateCancellation = new();
+    private UpdateInfo? pendingUpdate;
+    private bool updateBusy;
+    private bool syncingContent;
 
-    public SettingsForm(AppSettings settings, AppText text, Action<AppSettings> save)
+    /// <summary>True once an update installer has been started; the caller should exit the app.</summary>
+    public bool UpdateLaunched { get; private set; }
+
+    public SettingsForm(AppSettings settings, AppText text, DisplayCapabilities capabilities, Action<AppSettings> save)
     {
-        initialSettings = settings;
+        this.text = text;
         this.save = save;
+        DoubleBuffered = true;
+        SuspendLayout();
+        extra = SettingsText.For(settings.LanguageCode);
+        hasBattery = SystemInformation.PowerStatus.BatteryChargeStatus != BatteryChargeStatus.NoSystemBattery
+            && SystemInformation.PowerStatus.BatteryChargeStatus != BatteryChargeStatus.Unknown;
+        initialSettings = hasBattery ? settings : settings with { ApplyToAc = true };
+
         Text = text.SettingsTitle;
+        Font = Fonts.Create(9f);
+        BackColor = palette.WindowBack;
+        ForeColor = palette.Text;
         StartPosition = FormStartPosition.CenterScreen;
-        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.Sizable;
-        MaximizeBox = true;
+        MaximizeBox = false;
         MinimizeBox = true;
+        ShowIcon = true;
+        Icon = StateIconFactory.Create(TrayIconState.Indefinite, Theme.TaskbarUsesDark);
 
-        // Scale the window to the current monitor's working area so it fits on small or high-DPI screens.
         var workingArea = (Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen)!.WorkingArea;
-        MinimumSize = new Size(Math.Min(420, workingArea.Width - 40), Math.Min(360, workingArea.Height - 40));
-        Size = new Size(Math.Min(620, (int)(workingArea.Width * 0.6)), Math.Min(760, (int)(workingArea.Height * 0.85)));
+        MinimumSize = new Size(Math.Min(this.S(520), workingArea.Width - 40), Math.Min(this.S(420), workingArea.Height - 40));
+        Size = new Size(Math.Min(this.S(760), workingArea.Width - 40), Math.Min(this.S(860), (int)(workingArea.Height * 0.92)));
 
-        sleep = new TimeoutEditor(settings.NormalSleepSeconds, CreateMinuteOptions(180), text);
-        hibernate = new TimeoutEditor(settings.NormalHibernateSeconds, CreateMinuteOptions(720), text);
-        dim = new TimeoutEditor(settings.DisplayDimSeconds, new[] { 0u, 5u, 10u, 15u, 30u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u, 2700u, 3600u }, text);
-        displayOff = new TimeoutEditor(settings.DisplayOffSeconds, new[] { 0u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u, 2700u, 3600u }, text);
-        brightness = new TrackBar { Minimum = 0, Maximum = 100, TickFrequency = 10, Value = settings.DimBrightnessPercent };
-        brightnessValue = new Label { Text = $"{brightness.Value}%", AutoSize = true, TextAlign = ContentAlignment.MiddleLeft };
+        sleep = new TimeoutEditor(palette, settings.NormalSleepSeconds, CreateMinuteOptions(180), text, extra);
+        hibernate = new TimeoutEditor(palette, settings.NormalHibernateSeconds, CreateMinuteOptions(720), text, extra);
+        dim = new TimeoutEditor(palette, settings.DisplayDimSeconds, new[] { 0u, 15u, 30u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u }, text, extra);
+        displayOff = new TimeoutEditor(palette, settings.DisplayOffSeconds, new[] { 0u, 60u, 120u, 180u, 300u, 600u, 900u, 1800u, 2700u, 3600u }, text, extra);
+
+        brightness.Value = settings.DimBrightnessPercent;
+        brightnessValue = CreateValueLabel($"{brightness.Value}%");
         brightness.ValueChanged += (_, _) => brightnessValue.Text = $"{brightness.Value}%";
-        smoothDimming = new CheckBox { Text = text.SmoothDimming, Checked = settings.SmoothDimmingEnabled, AutoSize = true, TabStop = true };
-        var durationTicks = (int)Math.Min(50, Math.Max(3, settings.SmoothDimmingDurationMs / 100));
-        smoothDimmingDuration = new TrackBar { Minimum = 3, Maximum = 50, TickFrequency = 5, Value = durationTicks };
-        smoothDimmingDurationValue = new Label { Text = FormatDuration(smoothDimmingDuration.Value), AutoSize = true, TextAlign = ContentAlignment.MiddleLeft };
-        smoothDimmingDuration.ValueChanged += (_, _) => smoothDimmingDurationValue.Text = FormatDuration(smoothDimmingDuration.Value);
-        applyToAc = new CheckBox { Text = text.ApplyToAc, Checked = settings.ApplyToAc, AutoSize = true, TabStop = true };
-        applyToDc = new CheckBox { Text = text.ApplyToDc, Checked = settings.ApplyToDc, AutoSize = true, TabStop = true };
-        language = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
-        var languageOptions = AppText.Languages
+        duration.Value = (int)Math.Clamp(settings.SmoothDimmingDurationMs / 100, 3, 50);
+        durationValue = CreateValueLabel(FormatDuration(duration.Value));
+        duration.ValueChanged += (_, _) => durationValue.Text = FormatDuration(duration.Value);
+
+        smoothDimming = new ToggleSwitch(palette) { Checked = settings.SmoothDimmingEnabled };
+        softwareDimming = new ToggleSwitch(palette) { Checked = settings.AllowSoftwareDimming };
+        applyToAc = new ToggleSwitch(palette) { Checked = settings.ApplyToAc };
+        applyToDc = new ToggleSwitch(palette) { Checked = settings.ApplyToDc };
+
+        languageOptions = AppText.Languages
             .Select(option => option.Code == "system" ? option with { DisplayName = text.SystemDefault } : option)
             .ToArray();
-        language.Items.AddRange(languageOptions.Cast<object>().ToArray());
-        language.DisplayMember = nameof(LanguageOption.DisplayName);
-        language.ValueMember = nameof(LanguageOption.Code);
+        language = new DropdownBox(palette, 170);
+        language.Items.AddRange(languageOptions.Select(option => option.DisplayName));
         language.SelectedIndex = Math.Max(0, Array.FindIndex(languageOptions, option => option.Code == settings.LanguageCode));
 
-        var buttonBar = new FlowLayoutPanel
+        content = new VStack { Gap = this.S(8), Inset = new Padding(this.S(24), this.S(12), this.S(24), this.S(20)), BackColor = palette.WindowBack };
+        scrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = palette.WindowBack };
+        scrollHost.Controls.Add(content);
+
+        // Sleep
+        var sleepCard = new Card(palette);
+        AddRow(sleepCard, Glyph.Moon, text.Sleep, extra.SleepDesc, sleep);
+        AddRow(sleepCard, Glyph.Snowflake, text.Hibernate, extra.HibernateDesc, hibernate);
+        AddSection(text.SleepPolicy, sleepCard);
+
+        // Display
+        var displayCard = new Card(palette);
+        AddRow(displayCard, Glyph.Sun, text.Dim, extra.DimDesc, dim);
+        AddRow(displayCard, Glyph.Monitor, text.DisplayOff, extra.DisplayOffDesc, displayOff);
+        brightnessRow = AddRow(displayCard, Glyph.Sun, text.DimBrightness, extra.DimBrightnessDesc, WithValue(brightness, brightnessValue));
+        dimHintRow = AddRow(displayCard, Glyph.Info, extra.DimDisabledHint, string.Empty, null);
+        AddSection(text.DisplayPolicy, displayCard);
+
+        // Smooth dimming and the detected capabilities of this machine
+        var smoothCard = new Card(palette);
+        smoothRow = AddRow(smoothCard, Glyph.Sun, text.SmoothDimming, extra.SmoothDesc, smoothDimming);
+        durationRow = AddRow(smoothCard, Glyph.Timer, text.SmoothDimmingDuration, extra.FadeDesc, WithValue(duration, durationValue));
+        softwareRow = AddRow(smoothCard, Glyph.Monitor, extra.SoftwareDimming, extra.SoftwareDimmingDesc, softwareDimming);
+        AddRow(smoothCard, Glyph.Info, extra.DetectedTitle, DescribeCapabilities(capabilities), null);
+        AddSection(extra.SmoothSection, smoothCard);
+
+        // Scope: a desktop has no battery, so the AC/DC choice is replaced by an explanation.
+        var scopeCard = new Card(palette);
+        if (hasBattery)
         {
-            Dock = DockStyle.Bottom,
-            Height = 56,
-            Padding = new Padding(12, 10, 12, 8),
-            FlowDirection = FlowDirection.RightToLeft,
-            WrapContents = false
-        };
-        var cancel = new Button { Text = text.Cancel, DialogResult = DialogResult.Cancel, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        var apply = new Button { Text = text.Apply, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        apply.Click += ApplySettings;
-        buttonBar.Controls.Add(cancel);
-        buttonBar.Controls.Add(apply);
-
-        scrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        mainTable = new TableLayoutPanel
+            AddRow(scopeCard, Glyph.Plug, text.ApplyToAc, extra.ApplyAcDesc, applyToAc);
+            AddRow(scopeCard, Glyph.Battery, text.ApplyToDc, extra.ApplyDcDesc, applyToDc);
+        }
+        else
         {
-            ColumnCount = 2,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Dock = DockStyle.Top,
-            Padding = new Padding(16, 12, 16, 12)
+            AddRow(scopeCard, Glyph.Plug, text.ApplyToAc, extra.DesktopScopeNote, null);
+        }
+
+        AddSection(text.Scope, scopeCard);
+
+        var languageCard = new Card(palette);
+        AddRow(languageCard, Glyph.Globe, text.Language, extra.LanguageDesc, language);
+        AddSection(text.Language, languageCard);
+
+        var aboutCard = new Card(palette);
+        updateButton = new FluentButton(palette, extra.CheckUpdate, primary: false) { BackColor = palette.CardBack, Width = this.S(150) };
+        updateButton.Click += (_, _) => OnUpdateClick();
+        aboutRow = AddRow(aboutCard, Glyph.Info, string.Format(extra.VersionTitle, UpdateService.CurrentVersion), extra.VersionDesc, updateButton);
+        AddSection(extra.AboutSection, aboutCard);
+
+        var footer = new Panel { Dock = DockStyle.Bottom, Height = this.S(72), BackColor = palette.CardBack };
+        footer.Paint += (_, e) =>
+        {
+            using var pen = new Pen(palette.Divider);
+            e.Graphics.DrawLine(pen, 0, 0, footer.Width, 0);
         };
-        mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        saveButton = new FluentButton(palette, text.Apply, primary: true) { Anchor = AnchorStyles.Right | AnchorStyles.Top };
+        saveButton.BackColor = palette.CardBack;
+        saveButton.Click += (_, _) => Commit();
+        var cancel = new FluentButton(palette, text.Cancel, primary: false) { DialogResult = DialogResult.Cancel, Anchor = AnchorStyles.Right | AnchorStyles.Top, BackColor = palette.CardBack };
+        message = new Label
+        {
+            AutoSize = false,
+            ForeColor = palette.Danger,
+            BackColor = palette.CardBack,
+            Font = Fonts.Create(9f),
+            TextAlign = ContentAlignment.MiddleLeft,
+            Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
+        };
+        footer.Controls.Add(saveButton);
+        footer.Controls.Add(cancel);
+        footer.Controls.Add(message);
+        footer.Resize += (_, _) => LayoutFooter(footer, saveButton, cancel);
 
-        AddSection(text.SleepPolicy);
-        AddRow(text.Sleep, sleep);
-        AddRow(text.Hibernate, hibernate);
-        AddSection(text.DisplayPolicy);
-        AddRow(text.Dim, dim);
-        AddRow(text.DisplayOff, displayOff);
-        AddRow(text.DimBrightness, CreateBrightnessValueControl());
-        AddFullWidthRow(smoothDimming);
-        AddRow(text.SmoothDimmingDuration, CreateDurationValueControl());
-        AddSection(text.Scope);
-        AddFullWidthRow(CreateToggleRow());
-        AddSection(text.Language);
-        AddRow(text.Language, language);
-        errorLabel = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(520, 0), Margin = new Padding(0, 10, 0, 0) };
-        AddFullWidthRow(errorLabel);
-
-        scrollHost.Controls.Add(mainTable);
-        Controls.Add(buttonBar);
         Controls.Add(scrollHost);
-        AcceptButton = apply;
+        Controls.Add(footer);
+        AcceptButton = saveButton;
         CancelButton = cancel;
-        scrollHost.ClientSizeChanged += (_, _) => SyncTableWidth();
-        Shown += (_, _) => SyncTableWidth();
+        LayoutFooter(footer, saveButton, cancel);
+
+        foreach (var editor in new[] { sleep, hibernate, dim, displayOff })
+        {
+            editor.Changed += (_, _) => SyncState();
+        }
+
+        foreach (var toggle in new[] { smoothDimming, softwareDimming, applyToAc, applyToDc })
+        {
+            toggle.CheckedChanged += (_, _) => SyncState();
+        }
+
+        brightness.ValueChanged += (_, _) => SyncState();
+        duration.ValueChanged += (_, _) => SyncState();
+        language.SelectedIndexChanged += (_, _) => SyncState();
+
+        scrollHost.ClientSizeChanged += (_, _) => SyncContent();
+        content.SizeChanged += (_, _) => SyncContent();
+        HandleCreated += (_, _) =>
+        {
+            NativeUi.ApplyWindowTheme(Handle, palette);
+            NativeUi.ApplyControlTheme(scrollHost.Handle, palette);
+        };
+        Load += (_, _) => SyncContent();
+        Shown += (_, _) =>
+        {
+            SyncContent();
+            _ = CheckForUpdateAsync(silent: true);
+        };
+        FormClosed += (_, _) => updateCancellation.Cancel();
+        SyncState();
+        ResumeLayout(false);
     }
 
-    private void SyncTableWidth()
+    private static Label CreateValueLabel(string value) => new()
     {
-        // ClientSize already excludes the scrollbar width once AutoScroll shows one.
-        mainTable.Width = Math.Max(300, scrollHost.ClientSize.Width);
-    }
-
-    private void AddSection(string title)
-    {
-        var rowIndex = mainTable.RowCount++;
-        mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var label = CreateSection(title);
-        mainTable.Controls.Add(label, 0, rowIndex);
-        mainTable.SetColumnSpan(label, 2);
-    }
-
-    private void AddRow(string caption, Control value)
-    {
-        var rowIndex = mainTable.RowCount++;
-        mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var label = new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 10, 8, 2) };
-        value.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        value.Margin = new Padding(0, 4, 0, 4);
-        mainTable.Controls.Add(label, 0, rowIndex);
-        mainTable.Controls.Add(value, 1, rowIndex);
-    }
-
-    private void AddFullWidthRow(Control control)
-    {
-        var rowIndex = mainTable.RowCount++;
-        mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        control.Margin = new Padding(0, 4, 0, 4);
-        mainTable.Controls.Add(control, 0, rowIndex);
-        mainTable.SetColumnSpan(control, 2);
-    }
-
-    private Control CreateSection(string text) => new Label
-    {
-        Text = text,
-        Font = new Font(SystemFonts.MessageBoxFont ?? Control.DefaultFont, FontStyle.Bold),
-        AutoSize = true,
-        Margin = new Padding(0, 12, 0, 4)
+        Text = value,
+        AutoSize = false,
+        TextAlign = ContentAlignment.MiddleRight,
+        BackColor = Color.Transparent
     };
 
-    private Control CreateBrightnessValueControl()
+    private void LayoutFooter(Panel footer, Control saveBtn, Control cancel)
     {
-        var panel = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
-        brightness.Dock = DockStyle.Fill;
-        brightnessValue.Anchor = AnchorStyles.Left;
-        panel.Controls.Add(brightness, 0, 0);
-        panel.Controls.Add(brightnessValue, 1, 0);
+        var margin = this.S(24);
+        var gap = this.S(8);
+        var top = (footer.Height - saveBtn.Height) / 2;
+        saveBtn.Location = new Point(footer.Width - margin - saveBtn.Width, top);
+        cancel.Location = new Point(saveBtn.Left - gap - cancel.Width, top);
+        message.SetBounds(margin, top, Math.Max(0, cancel.Left - gap - margin), saveBtn.Height);
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED: paint the whole child tree off-screen, no flicker
+            return cp;
+        }
+    }
+
+    private void SyncContent()
+    {
+        if (syncingContent)
+        {
+            return;
+        }
+
+        syncingContent = true;
+        try
+        {
+            var width = scrollHost.ClientSize.Width;
+            if (width > 0 && content.Width != width)
+            {
+                content.Width = width;
+            }
+
+            var min = new Size(0, content.Height);
+            if (scrollHost.AutoScrollMinSize != min)
+            {
+                scrollHost.AutoScrollMinSize = min;
+            }
+        }
+        finally
+        {
+            syncingContent = false;
+        }
+    }
+
+    private Control WithValue(FluentSlider slider, Label value)
+    {
+        var panel = new Panel { BackColor = Color.Transparent, Size = new Size(this.S(260), this.S(32)) };
+        slider.Location = new Point(0, 0);
+        slider.Width = this.S(190);
+        value.ForeColor = palette.SubText;
+        value.SetBounds(slider.Right + this.S(6), 0, this.S(60), panel.Height);
+        value.Font = Fonts.Create(9.5f);
+        panel.Controls.Add(slider);
+        panel.Controls.Add(value);
         return panel;
     }
 
-    private Control CreateDurationValueControl()
+    private SettingRow AddRow(Card card, Glyph icon, string title, string description, Control? trailing)
     {
-        var panel = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Fill };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
-        smoothDimmingDuration.Dock = DockStyle.Fill;
-        smoothDimmingDurationValue.Anchor = AnchorStyles.Left;
-        panel.Controls.Add(smoothDimmingDuration, 0, 0);
-        panel.Controls.Add(smoothDimmingDurationValue, 1, 0);
-        return panel;
+        var row = new SettingRow(palette, icon, title, description, trailing) { ShowDivider = card.Controls.Count > 0 };
+        card.Controls.Add(row);
+        return row;
+    }
+
+    private void AddSection(string title, Card card)
+    {
+        content.Controls.Add(new SectionLabel(palette, title));
+        content.Controls.Add(card);
+    }
+
+    private string DescribeCapabilities(DisplayCapabilities capabilities)
+    {
+        var parts = new List<string>();
+        if (capabilities.InternalPanels > 0)
+        {
+            parts.Add(string.Format(extra.DetectInternal, capabilities.InternalPanels));
+        }
+
+        if (capabilities.DdcMonitors > 0)
+        {
+            parts.Add(string.Format(extra.DetectDdc, capabilities.DdcMonitors));
+        }
+
+        if (capabilities.SoftwareMonitors > 0)
+        {
+            parts.Add(string.Format(extra.DetectSoftware, capabilities.SoftwareMonitors));
+        }
+
+        if (parts.Count > 0)
+        {
+            return string.Join("  |  ", parts);
+        }
+
+        return initialSettings.AllowSoftwareDimming ? extra.DetectNone : extra.DetectNeedSoftware;
     }
 
     private static string FormatDuration(int ticks) => $"{ticks / 10.0:0.0}s";
 
-    private Control CreateToggleRow()
+    private AppSettings BuildSettings() => initialSettings with
     {
-        var row = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Margin = new Padding(0, 2, 0, 2) };
-        row.Controls.Add(applyToAc);
-        row.Controls.Add(applyToDc);
-        return row;
+        NormalSleepSeconds = sleep.GetSeconds(),
+        NormalHibernateSeconds = hibernate.GetSeconds(),
+        DisplayDimSeconds = dim.GetSeconds(),
+        DisplayOffSeconds = displayOff.GetSeconds(),
+        DimBrightnessPercent = (byte)brightness.Value,
+        SmoothDimmingEnabled = smoothDimming.Checked,
+        SmoothDimmingDurationMs = (uint)(duration.Value * 100),
+        AllowSoftwareDimming = softwareDimming.Checked,
+        ApplyToAc = hasBattery ? applyToAc.Checked : true,
+        ApplyToDc = applyToDc.Checked,
+        LanguageCode = languageOptions[Math.Max(0, language.SelectedIndex)].Code
+    };
+
+    private List<string> Validate(AppSettings settings)
+    {
+        var errors = new List<string>();
+        if (!settings.ApplyToAc && !settings.ApplyToDc)
+        {
+            errors.Add(extra.ErrNeedScope);
+        }
+
+        if (settings.DisplayDimSeconds != 0 && settings.DisplayOffSeconds != 0 && settings.DisplayOffSeconds <= settings.DisplayDimSeconds)
+        {
+            errors.Add(extra.ErrOffAfterDim);
+        }
+
+        return errors;
     }
 
-    private void ApplySettings(object? sender, EventArgs e)
+    // Keeps dependent controls, validation feedback and the Apply button in sync with the current input.
+    private void SyncState()
     {
-        var settings = initialSettings with
+        var dimNever = dim.GetSeconds() == 0;
+        dimHintRow.Visible = dimNever;
+        SetEnabled(brightnessRow, !dimNever);
+        SetEnabled(smoothRow, !dimNever);
+        SetEnabled(durationRow, !dimNever && smoothDimming.Checked);
+        SetEnabled(softwareRow, !dimNever && smoothDimming.Checked);
+
+        var current = BuildSettings();
+        var errors = Validate(current);
+        message.Text = string.Join("  ", errors);
+        saveButton.Enabled = errors.Count == 0 && current != initialSettings;
+    }
+
+    private static void SetEnabled(Control control, bool enabled)
+    {
+        if (control.Enabled != enabled)
         {
-            NormalSleepSeconds = sleep.GetSeconds(),
-            NormalHibernateSeconds = hibernate.GetSeconds(),
-            DisplayDimSeconds = dim.GetSeconds(),
-            DisplayOffSeconds = displayOff.GetSeconds(),
-            DimBrightnessPercent = (byte)brightness.Value,
-            SmoothDimmingEnabled = smoothDimming.Checked,
-            SmoothDimmingDurationMs = (uint)(smoothDimmingDuration.Value * 100),
-            ApplyToAc = applyToAc.Checked,
-            ApplyToDc = applyToDc.Checked,
-            LanguageCode = ((LanguageOption)language.SelectedItem!).Code
-        };
-        var errors = SettingsValidation.Validate(settings);
+            control.Enabled = enabled;
+        }
+    }
+
+    private void OnUpdateClick()
+    {
+        if (updateBusy)
+        {
+            return;
+        }
+
+        _ = pendingUpdate is null ? CheckForUpdateAsync(silent: false) : InstallUpdateAsync(pendingUpdate);
+    }
+
+    private async Task CheckForUpdateAsync(bool silent)
+    {
+        if (updateBusy)
+        {
+            return;
+        }
+
+        updateBusy = true;
+        updateButton.Enabled = false;
+        if (!silent)
+        {
+            aboutRow.Description = extra.Checking;
+        }
+
+        try
+        {
+            pendingUpdate = await updater.CheckAsync(updateCancellation.Token);
+            if (pendingUpdate is not null)
+            {
+                aboutRow.Description = string.Format(extra.NewVersion, pendingUpdate.Version);
+                updateButton.Text = extra.UpdateNow;
+            }
+            else if (!silent)
+            {
+                aboutRow.Description = extra.UpToDate;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            if (!silent)
+            {
+                aboutRow.Description = string.Format(extra.UpdateFailed, exception.Message);
+            }
+        }
+        finally
+        {
+            updateBusy = false;
+            if (!IsDisposed)
+            {
+                updateButton.Enabled = true;
+            }
+        }
+    }
+
+    private async Task InstallUpdateAsync(UpdateInfo update)
+    {
+        if (!UpdateService.IsInstalledCopy)
+        {
+            aboutRow.Description = extra.UpdatePortable;
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(update.PageUrl) { UseShellExecute = true });
+            return;
+        }
+
+        updateBusy = true;
+        updateButton.Enabled = false;
+        var progress = new Progress<int>(percent => aboutRow.Description = string.Format(extra.Downloading, percent));
+        try
+        {
+            aboutRow.Description = string.Format(extra.Downloading, 0);
+            await updater.DownloadAndStartAsync(update, progress, updateCancellation.Token);
+            UpdateLaunched = true;
+            Close();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            aboutRow.Description = string.Format(extra.UpdateFailed, exception.Message);
+            updateBusy = false;
+            if (!IsDisposed)
+            {
+                updateButton.Enabled = true;
+            }
+        }
+    }
+
+    private void Commit()
+    {
+        var settings = BuildSettings();
+        var errors = Validate(settings);
         if (errors.Count > 0)
         {
-            errorLabel.Text = string.Join(Environment.NewLine, errors);
+            message.Text = string.Join("  ", errors);
             return;
         }
 
@@ -219,7 +485,7 @@ internal sealed class SettingsForm : Form
         }
         catch (Exception exception)
         {
-            errorLabel.Text = exception.Message;
+            message.Text = exception.Message;
         }
     }
 
@@ -228,33 +494,4 @@ internal sealed class SettingsForm : Form
             .Where(minutes => minutes <= maximumMinutes)
             .Select(minutes => minutes * 60)
             .ToArray();
-
-    private sealed class TimeoutEditor : Panel
-    {
-        private readonly ComboBox selection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
-        private readonly NumericUpDown customSeconds = new() { Minimum = 1, Maximum = 720 * 60 * 60, Width = 130, Enabled = false };
-        private readonly uint[] options;
-
-        public TimeoutEditor(uint seconds, uint[] options, AppText text)
-        {
-            this.options = options;
-            AutoSize = true;
-            AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            selection.Items.AddRange(options.Select(seconds => Format(seconds, text)).Append(text.Custom).ToArray());
-            var index = Array.IndexOf(options, seconds);
-            selection.SelectedIndex = index >= 0 ? index : options.Length;
-            customSeconds.Value = Math.Min(Math.Max(seconds, 1), (uint)customSeconds.Maximum);
-            selection.SelectedIndexChanged += (_, _) => customSeconds.Enabled = selection.SelectedIndex == options.Length;
-            var flow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Dock = DockStyle.Fill };
-            flow.Controls.Add(selection);
-            flow.Controls.Add(customSeconds);
-            Controls.Add(flow);
-        }
-
-        public uint GetSeconds() => selection.SelectedIndex == options.Length
-            ? (uint)customSeconds.Value
-            : options[selection.SelectedIndex];
-
-        private static string Format(uint seconds, AppText text) => seconds == 0 ? text.Never : seconds < 60 ? $"{seconds} s" : $"{seconds / 60} {text.Minutes}";
-    }
 }

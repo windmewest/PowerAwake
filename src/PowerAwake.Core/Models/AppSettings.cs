@@ -10,6 +10,7 @@ public sealed record AppSettings
     public byte DimBrightnessPercent { get; init; } = 50;
     public bool SmoothDimmingEnabled { get; init; } = true;
     public uint SmoothDimmingDurationMs { get; init; } = 1500;
+    public bool AllowSoftwareDimming { get; init; } = true;
     public bool ApplyToAc { get; init; } = true;
     public bool ApplyToDc { get; init; } = true;
     public bool KeepScreenOn { get; init; }

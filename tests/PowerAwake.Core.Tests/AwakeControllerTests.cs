@@ -47,6 +47,25 @@ public sealed class AwakeControllerTests
         Assert.Equal(original.HibernateDc, applied.HibernateDc);
     }
 
+    [Fact]
+    public void StopAndApplyNormalSettings_RestoresDimTimeoutWhenAwakeIsAlreadyOff()
+    {
+        var scheme = Guid.NewGuid();
+        var original = CreateValues(900) with { DimAc = 0, DimDc = 0 };
+        var policy = new FakePowerPolicy(scheme, original);
+        var path = Path.Combine(Path.GetTempPath(), $"powerawake-{Guid.NewGuid():N}", "recovery.json");
+        var controller = new AwakeController(policy, new JsonFileStore<PowerSnapshot>(path));
+        var method = typeof(AwakeController).GetMethod("StopAndApplyNormalSettings");
+
+        Assert.NotNull(method);
+        method.Invoke(controller, new object[] { new AppSettings { DisplayDimSeconds = 60 } });
+
+        var restored = policy.ReadValues(scheme);
+        Assert.Equal(60u, restored.DimAc);
+        Assert.Equal(60u, restored.DimDc);
+        Assert.IsType<AwakeState.Off>(controller.State);
+    }
+
     private static PowerValues CreateValues(uint timeout) => new()
     {
         SleepAc = timeout,

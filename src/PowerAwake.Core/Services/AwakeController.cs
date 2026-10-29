@@ -91,6 +91,16 @@ public sealed class AwakeController
         logger.Info("Awake 已关闭并恢复电源策略。");
     }
 
+    /// <summary>
+    /// Stops Awake, then reapplies the configured normal policy. This is used during app shutdown
+    /// so a temporary native-dimming override cannot remain active after the process exits.
+    /// </summary>
+    public void StopAndApplyNormalSettings(AppSettings settings)
+    {
+        Stop();
+        ApplyNormalSettings(settings);
+    }
+
     public void SetKeepScreenOn(AppSettings settings)
     {
         if (activeSnapshot is null || State is AwakeState.Off)
