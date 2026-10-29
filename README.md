@@ -1,8 +1,26 @@
-# PowerAwake
+<p align="center">
+  <img src="docs/images/powerawake-logo.png" alt="PowerAwake infinity switching logo" width="180" />
+</p>
+
+<h1 align="center">PowerAwake</h1>
 
 [English](#english) | [Espanol](#espanol) | [中文](#中文)
 
 PowerAwake is a lightweight Windows 11 tray application that manages the active Windows power plan to keep a computer awake. It is designed for cases where a temporary execution-state request is not sufficient, including lock-screen and Modern Standby scenarios.
+
+<p align="center">
+  <a href="https://github.com/windmewest/PowerAwake/releases/latest">Download latest release · 下载最新版</a>
+</p>
+
+## Screenshot · 软件截图
+
+The Settings window brings sleep, display and smooth dimming controls together in a Windows 11 interface. Menus and icons follow the Windows light or dark theme. The screenshot below shows light mode.
+
+设置窗口集中管理睡眠、屏幕策略和平滑变暗；菜单与图标跟随 Windows 浅色/深色主题。下图为浅色模式实机截图。
+
+<p align="center">
+  <img src="docs/images/settings-light.png" alt="PowerAwake Settings in light mode, showing sleep policy, display brightness and software dimming controls" width="820" />
+</p>
 
 ## 中文
 
